@@ -1,0 +1,160 @@
+
+library(htmltools)
+library(shiny)
+library(leaflet)
+library(tidyverse)
+
+
+# Reading the two given datasets
+a <-
+    read.csv("Pedestrian_Counting_System_2019 (Exercise 2).csv")
+b <-
+    read.csv("Pedestrian_Counting_System_-_Sensor_Locations (Exercise 2).csv")
+
+# Merging two datasets to form a single dataset ######
+mergeNew <-
+    merge(a,
+          b,
+          by.x = 'Sensor_Name',
+          by.y = 'sensor_name',
+          all.x = TRUE)
+
+
+avg_count_map <-
+    aggregate(Hourly_Counts ~ Sensor_Name + latitude + longitude,
+              mergeNew ,
+              mean)
+# Rounding decimal for Average_Hourly_Counts#####
+avg_count_map$Hourly_Counts <-
+    round(avg_count_map$Hourly_Counts, 2)
+
+# Define UI for application that draws a histogram
+ui <-
+    fluidPage(leafletOutput("myMap"),
+              p(),
+              uiOutput("selectSensor"),
+              p(),
+              plotOutput("plot"))
+
+
+# SERVER ###########
+# Define server logic required to draw a histogram
+server <- function(input, output, session) {
+    ## MAP section ########
+    # Plotting maps in shiny ######
+    output$myMap <- renderLeaflet({
+        leaflet(data = avg_count_map) %>%
+            addTiles() %>%
+            addCircleMarkers(
+                ~ longitude,
+                ~ latitude,
+                popup = paste(
+                    "Sensor Name:",
+                    avg_count_map$Sensor_Name,
+                    "<br>",
+                    "Average Count:",
+                    avg_count_map$Hourly_Counts
+                ),
+                radius = ~ sqrt(Hourly_Counts) / 10,
+                label = ~ htmlEscape(Sensor_Name)
+            )
+        
+    })
+    
+    # Creating Input Selection Box ############
+    output$selectSensor <- renderUI({
+        selectInput("selectSensor",
+                    "Select Sensor Name:",
+                    choices = c(avg_count_map$Sensor_Name))
+    })
+    
+    ## PLOT Section ##############
+    # Creating data for Plot #########
+    average_count_plot <-
+        aggregate(Hourly_Counts ~ Sensor_Name + Day + Time + latitude + longitude,
+                  mergeNew,
+                  mean)
+    
+    #Arranging plots in the sequence of weekdays
+    
+    average_count_plot$Day <-
+        factor(
+            average_count_plot$Day,
+            levels = c(
+                'Monday',
+                'Tuesday',
+                'Wednesday',
+                'Thursday',
+                'Friday',
+                'Saturday',
+                'Sunday'
+            )
+        )
+    # Rounding decimal for Average_Hourly_Counts
+    average_count_plot$Hourly_Counts <-
+        round(average_count_plot$Hourly_Counts, 3)
+    
+    
+    # create a reactive value that will store the click position
+    data <- reactiveValues(clickedMarker = NULL)
+    
+    # Now it's time to create a plot using GGPLOT
+    
+    observeEvent(input$myMap_marker_click, {
+        data$clickedMarker <- input$myMap_marker_click
+        average_count_select <-
+            average_count_plot[(average_count_plot$latitude == data$clickedMarker$lat) &
+                                   (average_count_plot$longitude == data$clickedMarker$lng),]
+        
+        #setting value of choices
+        output$selectSensor <- renderUI({
+            selectInput(
+                "selectSensor",
+                "Select Sensor Name:",
+                choices = c(
+                    average_count_select$Sensor_Name,
+                    avg_count_map$Sensor_Name
+                ),
+                selected = 1
+            )
+        })
+    })
+    
+    
+    selectSensor_input <- reactive({
+        average_count_plot[average_count_plot$Sensor_Name == input$selectSensor, ]
+    })
+    
+    # Plotting the graph for every day of the week
+    output$plot <- renderPlot({
+        lat <- data$clickedMarker$lat
+        lng <- data$clickedMarker$lng
+        if ((!is.null(lat)) &
+            (!is.null(lng))) {
+            ggplot(data = average_count_plot[(average_count_plot$latitude == data$clickedMarker$lat) &
+                                                 (average_count_plot$longitude == data$clickedMarker$lng),], aes(x = Time, y = Hourly_Counts)) + geom_line() + facet_wrap(~ Day) +
+                theme(strip.background = element_rect(fill = "red")) +
+                theme(strip.text = element_text(colour = 'white')) + scale_x_continuous(breaks = c(0:23))
+        } else{
+            ggplot(data = average_count_plot, aes(x = Time, y = Hourly_Counts)) +
+                geom_line() + facet_wrap(~ Day) + theme(strip.background =
+                                                            element_rect(fill = "red")) +
+                theme(strip.text = element_text(colour = 'white')) + scale_x_continuous(breaks = c(0:23))
+        }
+        
+    })
+    
+    
+    output$plot <- renderPlot({
+        avg_count_map <- selectSensor_input()
+        ggplot(data = avg_count_map, aes(x = Time, y = Hourly_Counts)) +
+            geom_line() + facet_wrap(~ Day) + theme(strip.background =
+                                                        element_rect(fill = "red")) +
+            theme(strip.text = element_text(colour = 'white')) + scale_x_continuous(breaks = c(0:23))
+        
+    })
+    
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
